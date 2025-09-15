@@ -2,8 +2,7 @@
 Analisador de Habitabilidade de Exoplanetas
 # Analisador de Habitabilidade de Exoplanetas
 
-Um sistema interativo em **HTML, CSS e JavaScript** que permite explorar, visualizar e analisar a habitabilidade de exoplanetas com base em suas propriedades atmosféricas, orbitais e estelares.  
-O projeto combina ciência de dados astronômicos com visualização interativa, trazendo uma experiência educacional e informativa para estudantes e entusiastas.
+Um sistema interativo em **HTML, CSS e JavaScript** que permite explorar, visualizar e analisar a habitabilidade de exoplanetas com base em suas propriedades atmosféricas, orbitais e estelares. 
 
 ---
 
