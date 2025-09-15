@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisador de Habitabilidade de Exoplanetas</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: linear-gradient(135deg, #0B1426 0%, #1a202c 50%, #2d3748 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            overflow-x: hidden;
+        }
+
+        // Atualizar visualização do sistema
+        function updateVisualization(planet) {
+            const viz = document.getElementById('systemVisualization');
+            const hzElement = document.getElementById('habitableZone');
+            
+            // Calcular zona habitável
+            const hzCalc = new HabitableZoneCalculator(planet.stellarData);
+            const hz = hzCalc.calculateHabitableZone();
+            
+            // Escala para visualização (pixels)
+            const scale = 1000; // 1 AU = 1000 pixels
+            const hzInnerRadius = hz.inner * scale;
+            const hzOuterRadius = hz.outer * scale;
+            
+            // Definir tamanho da zona habitável
+            hzElement.style.width = `${hzOuterRadius * 2}px`;
+            hzElement.style.height = `${hzOuterRadius * 2}px`;
+            hzElement.style.border = `2px dashed #48bb78`;
+            
+            // Limpar órbitas existentes
+            const existingOrbits = viz.querySelectorAll('.planet-orbit, .planet-dot');
+            existingOrbits.forEach(el => el.remove());
+            
+            // Adicionar órbita do planeta
+            const planetOrbitRadius = planet.orbitalDistance * scale;
+            const orbit = document.createElement('div');
+            orbit.className = 'planet-orbit';
+            orbit.style.width = `${planetOrbitRadius * 2}px`;
+            orbit.style.height = `${planetOrbitRadius * 2}px`;
+            
+            // Adicionar planeta
+            const planetDot = document.createElement('div');
+            planetDot.className = 'planet-dot';
+            planetDot.style.top = '50%';
+            planetDot.style.left = `${50 + (planetOrbitRadius / viz.offsetWidth) * 50}%`;
+            
+            // Cor baseada na habitabilidade
+            const scorer = new HabitabilityScorer(planet);
+            const analysis = scorer.calculateOverallScore();
+            const planetColor = 
+                analysis.overall >= 75 ? '#48bb78' :
+                analysis.overall >= 55 ? '#f6e05e' :
+                analysis.overall >= 35 ? '#ed8936' : '#f56565';
+            
+            planetDot.style.background = planetColor;
+            planetDot.style.boxShadow = `0 0 10px ${planetColor}`;
+            
+            viz.appendChild(orbit);
+            viz.appendChild(planetDot);
+        }
+
+        // Função de filtro
+        function filterPlanets(filter) {
+            currentFilter = filter;
+            
+            // Atualizar botões de filtro
+            document.querySelectorAll('.filter-button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            renderPlanets();
+        }
+
+        // Inicializar aplicação
+        function init() {
+            renderPlanets();
+            
+            // Selecionar primeiro planeta automaticamente
+            if (exoplanets.length > 0) {
+                selectPlanet(exoplanets[1]); // TRAPPIST-1e como exemplo
+            }
+        }
+
+        // Executar quando página carregada
+        document.addEventListener('DOMContentLoaded', init);
+
+        // Adicionar animação às barras de score
+        function animateScoreBars() {
+            const scoreFills = document.querySelectorAll('.score-fill');
+            scoreFills.forEach(fill => {
+                const width = fill.style.width;
+                fill.style.width = '0%';
+                setTimeout(() => {
+                    fill.style.width = width;
+                }, 100);
+            });
+        }
+
+        // Observador para animar barras quando aparecem
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    setTimeout(animateScoreBars, 200);
+                }
+            });
+        });
+
+        // Dados educacionais sobre gases atmosféricos
+        const gasInfo = {
+            'H2O': {
+                name: 'Vapor de Água',
+                role: 'Essencial para vida; contribui para efeito estufa',
+                ideal: '0.1-5%',
+                earth: '0-4%'
+            },
+            'O2': {
+                name: 'Oxigênio',
+                role: 'Respiração; indica possível fotossíntese',
+                ideal: '15-35%',
+                earth: '21%'
+            },
+            'CO2': {
+                name: 'Dióxido de Carbono',
+                role: 'Efeito estufa; matéria-prima para plantas',
+                ideal: '<1%',
+                earth: '0.04%'
+            },
+            'N2': {
+                name: 'Nitrogênio',
+                role: 'Gás inerte; pressão atmosférica',
+                ideal: '60-80%',
+                earth: '78%'
+            },
+            'CH4': {
+                name: 'Metano',
+                role: 'Possível biossinatura; efeito estufa',
+                ideal: '<0.01%',
+                earth: '0.0002%'
+            },
+            'O3': {
+                name: 'Ozônio',
+                role: 'Proteção UV; indica oxigênio',
+                ideal: 'traços',
+                earth: '0.000006%'
+            },
+            'PH3': {
+                name: 'Fosfina',
+                role: 'Possível biossinatura anaeróbica',
+                ideal: 'traços ou zero',
+                earth: 'traços naturais'
+            }
+        };
+
+        // Função para mostrar tooltip com informações do gás
+        function showGasTooltip(gasElement, gasName) {
+            const info = gasInfo[gasName];
+            if (info) {
+                gasElement.title = `${info.name}\nFunção: ${info.role}\nFaixa ideal: ${info.ideal}\nTerra: ${info.earth}`;
+            }
+        }
+
+        // Aplicar tooltips aos elementos de gás
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(() => {
+                document.querySelectorAll('.gas-item').forEach(item => {
+                    const gasName = item.querySelector('span').textContent;
+                    showGasTooltip(item, gasName);
+                });
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
+        
+        .header {
+            background: rgba(11, 20, 38, 0.9);
+            padding: 20px;
+            text-align: center;
+            border-bottom: 2px solid #4299e1;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            padding: 20px;
+            min-height: calc(100vh - 80px);
+        }
+        
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .planet-selector {
+            background: rgba(45, 55, 72, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #4a5568;
+        }
+        
+        .planet-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .planet-card {
+            background: rgba(26, 32, 44, 0.8);
+            border: 2px solid #4a5568;
+            border-radius: 8px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .planet-card:hover {
+            border-color: #4299e1;
+            transform: translateY(-2px);
+        }
+        
+        .planet-card.selected {
+            border-color: #48bb78;
+            background: rgba(72, 187, 120, 0.1);
+        }
+        
+        .habitability-score {
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .score-high { color: #48bb78; }
+        .score-medium { color: #f6e05e; }
+        .score-low { color: #ed8936; }
+        .score-none { color: #f56565; }
+        
+        .analysis-panel {
+            background: rgba(26, 32, 44, 0.9);
+            border-radius: 10px;
+            border: 1px solid #4a5568;
+            overflow: hidden;
+        }
+        
+        .panel-header {
+            background: #4299e1;
+            color: white;
+            padding: 15px 20px;
+            font-weight: bold;
+        }
+        
+        .panel-content {
+            padding: 20px;
+        }
+        
+        .score-breakdown {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .score-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: rgba(45, 55, 72, 0.5);
+            border-radius: 5px;
+        }
+        
+        .score-bar {
+            width: 100px;
+            height: 8px;
+            background: #2d3748;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-left: 10px;
+        }
+        
+        .score-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f56565, #ed8936, #f6e05e, #48bb78);
+            transition: width 0.5s ease;
+        }
+        
+        .atmosphere-section {
+            margin-top: 20px;
+        }
+        
+        .gas-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .gas-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: rgba(45, 55, 72, 0.3);
+            border-radius: 4px;
+        }
+        
+        .gas-percentage {
+            font-weight: bold;
+            color: #4299e1;
+        }
+        
+        .biosignature {
+            background: rgba(72, 187, 120, 0.2);
+            border: 1px solid #48bb78;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        
+        .biosignature-title {
+            color: #48bb78;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .zone-indicator {
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        
+        .zone-habitable { background: #48bb78; color: white; }
+        .zone-optimistic { background: #f6e05e; color: #1a202c; }
+        .zone-outside { background: #f56565; color: white; }
+        
+        .comparison-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(45, 55, 72, 0.3);
+            border-radius: 8px;
+        }
+        
+        .filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-button {
+            padding: 8px 16px;
+            background: rgba(66, 153, 225, 0.2);
+            border: 1px solid #4299e1;
+            border-radius: 20px;
+            color: #4299e1;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .filter-button:hover, .filter-button.active {
+            background: #4299e1;
+            color: white;
+        }
+        
+        .visualization {
+            height: 300px;
+            background: radial-gradient(circle at center, #1a202c 0%, #0B1426 100%);
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        
+        .star {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            background: radial-gradient(circle, #ffd700 0%, #ff8c00 100%);
+            border-radius: 50%;
+            box-shadow: 0 0 20px #ffd700;
+        }
+        
+        .habitable-zone {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border: 2px dashed #48bb78;
+            border-radius: 50%;
+            background: rgba(72, 187, 120, 0.1);
+        }
+        
+        .planet-orbit {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+        }
+        
+        .planet-dot {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            .planet-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌌 Analisador de Habitabilidade de Exoplanetas</h1>
+        <p>Sistema avançado de análise atmosférica e classificação de habitabilidade</p>
+    </div>
+
+    <div class="container">
+        <div class="main-content">
+            <div class="planet-selector">
+                <h2>Selecione um Exoplaneta</h2>
+                <div class="filters">
+                    <div class="filter-button active" onclick="filterPlanets('all')">Todos</div>
+                    <div class="filter-button" onclick="filterPlanets('habitable')">Apenas Habitáveis</div>
+                    <div class="filter-button" onclick="filterPlanets('biosignatures')">Com Biossinaturas</div>
+                    <div class="filter-button" onclick="filterPlanets('earth-like')">Similares à Terra</div>
+                </div>
+                <div class="planet-grid" id="planetGrid"></div>
+            </div>
+            
+            <div class="visualization" id="systemVisualization">
+                <div class="star"></div>
+                <div class="habitable-zone" id="habitableZone"></div>
+            </div>
+        </div>
+
+        <div class="analysis-panel">
+            <div class="panel-header">
+                <span id="selectedPlanetName">Selecione um planeta</span>
+            </div>
+            <div class="panel-content" id="analysisContent">
+                <p>Clique em um planeta à esquerda para ver a análise detalhada de habitabilidade.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Dados de exoplanetas com informações detalhadas
+        const exoplanets = [
+            {
+                id: 1,
+                name: "Proxima Centauri b",
+                hostStar: "Proxima Centauri",
+                distance: 4.24, // anos-luz
+                mass: 1.17, // Terras
+                radius: 1.1, // Terras
+                orbitalDistance: 0.0485, // AU
+                temperature: 234, // K
+                atmosphere: {
+                    H2O: 0.001,
+                    CO2: 0.01,
+                    N2: 0.78,
+                    O2: 0.005,
+                    CH4: 0.0001
+                },
+                stellarData: {
+                    temperature: 3042,
+                    luminosity: 0.0017,
+                    type: "M"
+                }
+            },
+            {
+                id: 2,
+                name: "TRAPPIST-1e",
+                hostStar: "TRAPPIST-1",
+                distance: 40.7,
+                mass: 0.692,
+                radius: 0.918,
+                orbitalDistance: 0.028,
+                temperature: 251,
+                atmosphere: {
+                    H2O: 0.01,
+                    CO2: 0.001,
+                    N2: 0.75,
+                    O2: 0.18,
+                    CH4: 0.0005,
+                    O3: 0.00001
+                },
+                stellarData: {
+                    temperature: 2566,
+                    luminosity: 0.000553,
+                    type: "M"
+                }
+            },
+            {
+                id: 3,
+                name: "Kepler-452b",
+                hostStar: "Kepler-452",
+                distance: 1402,
+                mass: 5.0,
+                radius: 1.63,
+                orbitalDistance: 1.04,
+                temperature: 265,
+                atmosphere: {
+                    H2O: 0.005,
+                    CO2: 0.0005,
+                    N2: 0.77,
+                    O2: 0.21,
+                    CH4: 0.00001
+                },
+                stellarData: {
+                    temperature: 5757,
+                    luminosity: 1.2,
+                    type: "G"
+                }
+            },
+            {
+                id: 4,
+                name: "TOI-715 b",
+                hostStar: "TOI-715",
+                distance: 137,
+                mass: 3.02,
+                radius: 1.55,
+                orbitalDistance: 0.083,
+                temperature: 280,
+                atmosphere: {
+                    H2O: 0.02,
+                    CO2: 0.04,
+                    N2: 0.6,
+                    O2: 0.05,
+                    CH4: 0.001,
+                    H2S: 0.0001
+                },
+                stellarData: {
+                    temperature: 3450,
+                    luminosity: 0.058,
+                    type: "M"
+                }
+            },
+            {
+                id: 5,
+                name: "K2-18 b",
+                hostStar: "K2-18",
+                distance: 124,
+                mass: 8.6,
+                radius: 2.3,
+                orbitalDistance: 0.14,
+                temperature: 255,
+                atmosphere: {
+                    H2O: 0.1,
+                    CO2: 0.001,
+                    N2: 0.3,
+                    H2: 0.5,
+                    CH4: 0.01,
+                    PH3: 0.000001 // Fosfina - possível biossinatura
+                },
+                stellarData: {
+                    temperature: 3457,
+                    luminosity: 0.073,
+                    type: "M"
+                }
+            }
+        ];
+
+        let selectedPlanet = null;
+        let currentFilter = 'all';
+
+        // Classe para calcular zona habitável
+        class HabitableZoneCalculator {
+            constructor(stellarData) {
+                this.luminosity = stellarData.luminosity;
+                this.temperature = stellarData.temperature;
+            }
+
+            calculateHabitableZone() {
+                const L = this.luminosity;
+                const Teff = this.temperature;
+                const Tsun = 5778;
+
+                // Limites conservativos (Kopparapu et al. 2013)
+                const S_inner = 1.776 + 2.136e-4 * (Teff - Tsun) + 2.533e-8 * Math.pow(Teff - Tsun, 2);
+                const S_outer = 0.320 + 5.547e-5 * (Teff - Tsun) + 1.526e-9 * Math.pow(Teff - Tsun, 2);
+
+                return {
+                    inner: Math.sqrt(L / S_inner),
+                    outer: Math.sqrt(L / S_outer),
+                    optimisticInner: Math.sqrt(L / (1.107 + 1.332e-4 * (Teff - Tsun))),
+                    optimisticOuter: Math.sqrt(L / (0.356 + 6.171e-5 * (Teff - Tsun)))
+                };
+            }
+
+            isInHabitableZone(orbitalDistance) {
+                const hz = this.calculateHabitableZone();
+                return {
+                    conservative: orbitalDistance >= hz.inner && orbitalDistance <= hz.outer,
+                    optimistic: orbitalDistance >= hz.optimisticInner && orbitalDistance <= hz.optimisticOuter,
+                    zone: orbitalDistance >= hz.inner && orbitalDistance <= hz.outer ? 'habitable' :
+                          orbitalDistance >= hz.optimisticInner && orbitalDistance <= hz.optimisticOuter ? 'optimistic' : 'outside'
+                };
+            }
+        }
+
+        // Classe para análise atmosférica
+        class AtmosphereAnalyzer {
+            constructor(planetData) {
+                this.planet = planetData;
+                this.atmosphere = planetData.atmosphere;
+            }
+
+            analyzeComposition() {
+                let score = 0;
+                let biosignatures = [];
+                let issues = [];
+
+                // Análise de cada gás
+                const gases = this.atmosphere;
+
+                // Água (H2O)
+                if (gases.H2O) {
+                    if (gases.H2O > 0.001 && gases.H2O < 0.05) {
+                        score += 25;
+                    } else if (gases.H2O > 0.05) {
+                        issues.push("Excesso de vapor de água (efeito estufa extremo)");
+                        score -= 10;
+                    }
+                }
+
+                // Oxigênio (O2)
+                if (gases.O2) {
+                    if (gases.O2 > 0.1 && gases.O2 < 0.3) {
+                        score += 30;
+                        biosignatures.push({
+                            type: "Oxigênio",
+                            confidence: 0.8,
+                            description: "Presença significativa de O2"
+                        });
+                    } else if (gases.O2 > 0.3) {
+                        issues.push("Excesso de oxigênio (risco de combustão)");
+                    }
+                }
+
+                // Dióxido de Carbono (CO2)
+                if (gases.CO2) {
+                    if (gases.CO2 < 0.01) {
+                        score += 10;
+                    } else if (gases.CO2 > 0.95) {
+                        issues.push("Atmosfera dominada por CO2 (como Vênus)");
+                        score -= 40;
+                    }
+                }
+
+                // Metano (CH4)
+                if (gases.CH4) {
+                    if (gases.CH4 > 0.000001 && gases.CH4 < 0.01) {
+                        biosignatures.push({
+                            type: "Metano",
+                            confidence: 0.6,
+                            description: "Possível atividade biológica"
+                        });
+                        score += 15;
+                    }
+                }
+
+                // Ozônio (O3)
+                if (gases.O3 && gases.O3 > 0.000001) {
+                    biosignatures.push({
+                        type: "Ozônio",
+                        confidence: 0.9,
+                        description: "Escudo protetor contra radiação UV"
+                    });
+                    score += 20;
+                }
+
+                // Fosfina (PH3) - biossinatura controversa
+                if (gases.PH3 && gases.PH3 > 0) {
+                    biosignatures.push({
+                        type: "Fosfina",
+                        confidence: 0.5,
+                        description: "Possível indicador de vida anaeróbica"
+                    });
+                    score += 25;
+                }
+
+                // Sulfeto de hidrogênio (H2S) - tóxico
+                if (gases.H2S && gases.H2S > 0.0001) {
+                    issues.push("Presença de H2S (tóxico para vida complexa)");
+                    score -= 20;
+                }
+
+                // Desequilíbrio químico O2 + CH4
+                if (gases.O2 > 0.001 && gases.CH4 > 0.000001) {
+                    biosignatures.push({
+                        type: "Desequilíbrio O2-CH4",
+                        confidence: 0.8,
+                        description: "Coexistência de gases reativos"
+                    });
+                    score += 20;
+                }
+
+                return {
+                    score: Math.max(0, Math.min(100, score)),
+                    biosignatures,
+                    issues
+                };
+            }
+
+            canRetainAtmosphere() {
+                const escapeVelocity = Math.sqrt(2 * 6.674e-11 * this.planet.mass * 5.972e24 / (this.planet.radius * 6.371e6));
+                
+                // Velocidades críticas para retenção de gases
+                const criticalVelocities = {
+                    H2: 2500,
+                    H2O: 625,
+                    N2: 420,
+                    O2: 390,
+                    CO2: 300
+                };
+
+                const retention = {};
+                for (const [gas, criticalVel] of Object.entries(criticalVelocities)) {
+                    retention[gas] = escapeVelocity > criticalVel * 6;
+                }
+
+                return {
+                    escapeVelocity,
+                    canRetain: retention
+                };
+            }
+        }
+
+        // Classe principal de análise de habitabilidade
+        class HabitabilityScorer {
+            constructor(planetData) {
+                this.planet = planetData;
+                this.hzCalc = new HabitableZoneCalculator(planetData.stellarData);
+                this.atmAnalyzer = new AtmosphereAnalyzer(planetData);
+            }
+
+            calculateOverallScore() {
+                const hzScore = this.scoreHabitableZone();
+                const atmScore = this.scoreAtmosphere();
+                const planetScore = this.scorePlanetaryProperties();
+                const stellarScore = this.scoreStellarEnvironment();
+
+                const weights = {
+                    habitableZone: 0.3,
+                    atmosphere: 0.3,
+                    planetary: 0.2,
+                    stellar: 0.2
+                };
+
+                const totalScore = 
+                    hzScore * weights.habitableZone +
+                    atmScore * weights.atmosphere +
+                    planetScore * weights.planetary +
+                    stellarScore * weights.stellar;
+
+                return {
+                    overall: Math.round(totalScore),
+                    breakdown: {
+                        habitableZone: hzScore,
+                        atmosphere: atmScore,
+                        planetary: planetScore,
+                        stellar: stellarScore
+                    },
+                    classification: this.classifyHabitability(totalScore),
+                    atmosphereAnalysis: this.atmAnalyzer.analyzeComposition(),
+                    zoneAnalysis: this.hzCalc.isInHabitableZone(this.planet.orbitalDistance)
+                };
+            }
+
+            scoreHabitableZone() {
+                const zoneAnalysis = this.hzCalc.isInHabitableZone(this.planet.orbitalDistance);
+                
+                if (zoneAnalysis.conservative) return 100;
+                if (zoneAnalysis.optimistic) return 75;
+                
+                const hz = this.hzCalc.calculateHabitableZone();
+                const distance = this.planet.orbitalDistance;
+                const distanceFromZone = Math.min(
+                    Math.abs(distance - hz.inner),
+                    Math.abs(distance - hz.outer)
+                );
+                
+                return Math.max(0, 50 - (distanceFromZone / hz.inner) * 50);
+            }
+
+            scoreAtmosphere() {
+                const analysis = this.atmAnalyzer.analyzeComposition();
+                const retention = this.atmAnalyzer.canRetainAtmosphere();
+                
+                let score = analysis.score;
+                
+                // Penalidade se não pode reter atmosfera
+                if (!retention.canRetain.H2O || !retention.canRetain.O2) {
+                    score -= 30;
+                }
+                
+                return Math.max(0, Math.min(100, score));
+            }
+
+            scorePlanetaryProperties() {
+                let score = 50;
+                
+                // Massa (0.5 - 2.0 Terras ideal)
+                if (this.planet.mass >= 0.5 && this.planet.mass <= 2.0) {
+                    score += 30;
+                } else if (this.planet.mass < 0.5) {
+                    score -= 25;
+                } else if (this.planet.mass > 5) {
+                    score -= 35;
+                }
+                
+                // Raio (0.8 - 1.5 Terras ideal)
+                if (this.planet.radius >= 0.8 && this.planet.radius <= 1.5) {
+                    score += 20;
+                } else if (this.planet.radius > 2.0) {
+                    score -= 30; // Provavelmente mini-Netuno
+                }
+                
+                return Math.max(0, score);
+            }
+
+            scoreStellarEnvironment() {
+                let score = 50;
+                const stellarType = this.getSpectralType(this.planet.stellarData.temperature);
+                
+                switch (stellarType) {
+                    case 'G': score += 30; break;
+                    case 'K': score += 25; break;
+                    case 'F': score += 10; break;
+                    case 'M': score -= 5; break;
+                    default: score -= 20;
+                }
+                
+                return Math.max(0, score);
+            }
+
+            getSpectralType(temperature) {
+                if (temperature > 7500) return 'A';
+                if (temperature > 6000) return 'F';
+                if (temperature > 5200) return 'G';
+                if (temperature > 3700) return 'K';
+                return 'M';
+            }
+
+            classifyHabitability(score) {
+                if (score >= 75) return { level: "ALTA", color: "#48bb78", description: "Excelente candidato para vida" };
+                if (score >= 55) return { level: "MODERADA", color: "#f6e05e", description: "Bom potencial habitável" };
+                if (score >= 35) return { level: "BAIXA", color: "#ed8936", description: "Possivelmente habitável" };
+                return { level: "IMPROVÁVEL", color: "#f56565", description: "Pouco provável sustentar vida" };
+            }
+        }
+
+        // Função para renderizar planetas
+        function renderPlanets() {
+            const grid = document.getElementById('planetGrid');
+            grid.innerHTML = '';
+
+            let filteredPlanets = exoplanets;
+
+            // Aplicar filtros
+            switch (currentFilter) {
+                case 'habitable':
+                    filteredPlanets = exoplanets.filter(p => {
+                        const scorer = new HabitabilityScorer(p);
+                        return scorer.calculateOverallScore().overall >= 55;
+                    });
+                    break;
+                case 'biosignatures':
+                    filteredPlanets = exoplanets.filter(p => {
+                        const scorer = new HabitabilityScorer(p);
+                        return scorer.calculateOverallScore().atmosphereAnalysis.biosignatures.length > 0;
+                    });
+                    break;
+                case 'earth-like':
+                    filteredPlanets = exoplanets.filter(p => 
+                        p.mass >= 0.8 && p.mass <= 1.5 && 
+                        p.radius >= 0.9 && p.radius <= 1.2
+                    );
+                    break;
+            }
+
+            filteredPlanets.forEach(planet => {
+                const scorer = new HabitabilityScorer(planet);
+                const analysis = scorer.calculateOverallScore();
+                
+                const card = document.createElement('div');
+                card.className = `planet-card ${selectedPlanet?.id === planet.id ? 'selected' : ''}`;
+                card.onclick = () => selectPlanet(planet);
+
+                const scoreClass = 
+                    analysis.overall >= 75 ? 'score-high' :
+                    analysis.overall >= 55 ? 'score-medium' :
+                    analysis.overall >= 35 ? 'score-low' : 'score-none';
+
+                card.innerHTML = `
+                    <div class="habitability-score ${scoreClass}">${analysis.overall}%</div>
+                    <h3>${planet.name}</h3>
+                    <p><strong>Sistema:</strong> ${planet.hostStar}</p>
+                    <p><strong>Distância:</strong> ${planet.distance} anos-luz</p>
+                    <p><strong>Classificação:</strong> ${analysis.classification.level}</p>
+                    <div class="zone-indicator zone-${analysis.zoneAnalysis.zone}">
+                        ${analysis.zoneAnalysis.zone === 'habitable' ? 'Zona Habitável' :
+                          analysis.zoneAnalysis.zone === 'optimistic' ? 'Zona Otimística' : 'Fora da ZH'}
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        // Função para selecionar planeta
+        function selectPlanet(planet) {
+            selectedPlanet = planet;
+            renderPlanets();
+            updateAnalysisPanel(planet);
+            updateVisualization(planet);
+        }
+
+        // Atualizar painel de análise
+        function updateAnalysisPanel(planet) {
+            const nameElement = document.getElementById('selectedPlanetName');
+            const contentElement = document.getElementById('analysisContent');
+
+            nameElement.textContent = planet.name;
+
+            const scorer = new HabitabilityScorer(planet);
+            const analysis = scorer.calculateOverallScore();
+
+            const scoreClass = 
+                analysis.overall >= 75 ? 'score-high' :
+                analysis.overall >= 55 ? 'score-medium' :
+                analysis.overall >= 35 ? 'score-low' : 'score-none';
+
+            let biosignaturesHTML = '';
+            if (analysis.atmosphereAnalysis.biosignatures.length > 0) {
+                biosignaturesHTML = '<h3>🧬 Biossinaturas Detectadas</h3>';
+                analysis.atmosphereAnalysis.biosignatures.forEach(bio => {
+                    biosignaturesHTML += `
+                        <div class="biosignature">
+                            <div class="biosignature-title">${bio.type} (Confiança: ${(bio.confidence * 100).toFixed(0)}%)</div>
+                            <div>${bio.description}</div>
+                        </div>
+                    `;
+                });
+            }
+
+            contentElement.innerHTML = `
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <div class="habitability-score ${scoreClass}" style="font-size: 36px;">
+                        ${analysis.overall}%
+                    </div>
+                    <div style="color: ${analysis.classification.color}; font-weight: bold; margin-top: 10px;">
+                        ${analysis.classification.level}
+                    </div>
+                    <div style="margin-top: 5px; opacity: 0.8;">
+                        ${analysis.classification.description}
+                    </div>
+                </div>
+
+                <div class="score-breakdown">
+                    <div class="score-item">
